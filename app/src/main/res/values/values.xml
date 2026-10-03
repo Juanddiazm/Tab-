@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Tabú</string>
+
+    <color name="bg">#FF1E1B3A</color>
+    <color name="accent">#FFFF4D6D</color>
+    <color name="icon_bg">#FF4A2C83</color>
+
+    <style name="AppTheme" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/bg</item>
+        <item name="android:statusBarColor">@color/bg</item>
+        <item name="android:navigationBarColor">@color/bg</item>
+        <item name="android:colorAccent">@color/accent</item>
+    </style>
+</resources>
