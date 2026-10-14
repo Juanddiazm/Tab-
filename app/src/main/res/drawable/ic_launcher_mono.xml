@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Themed (monochrome) icon for Android 13+: bubble with the word lines cut out. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FF000000"
+        android:fillType="evenOdd"
+        android:pathData="M34,30h40a10,10 0 0 1 10,10v24a10,10 0 0 1 -10,10H50l-13,11V74h-3a10,10 0 0 1 -10,-10V40a10,10 0 0 1 10,-10z M37.5,39h27a3.5,3.5 0 0 1 0,7h-27a3.5,3.5 0 0 1 0,-7z M33,52.25h42a1.75,1.75 0 0 1 0,3.5h-42a1.75,1.75 0 0 1 0,-3.5z M37.5,62h17a3.5,3.5 0 0 1 0,7h-17a3.5,3.5 0 0 1 0,-7z" />
+</vector>

@@ -11,6 +11,7 @@ import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.LayerDrawable;
 import android.graphics.drawable.StateListDrawable;
 import android.media.AudioManager;
 import android.media.ToneGenerator;
@@ -27,6 +28,7 @@ import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.EditText;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -40,14 +42,18 @@ import java.util.Random;
 
 public class MainActivity extends Activity {
 
-    static final int BG = 0xFF1E1B3A, SURFACE = 0xFF2C2752, TEXT = 0xFFFFFFFF, MUTED = 0xFFB9B4D9,
-            ACCENT = 0xFFFF4D6D, GREEN = 0xFF22C55E, RED = 0xFFEF4444, GREY = 0xFF64748B,
-            YELLOW = 0xFFFACC15, INK = 0xFF1F2937;
-    static final int[] TEAM_COLORS = {0xFF3B82F6, 0xFFF97316, 0xFF10B981, 0xFFA855F7};
+    // Palette ("noche de juegos"): ink ground, cream cards, coral / sunflower / mint accents.
+    static final int INK = 0xFF17122E, SURFACE = 0xFF241D45, SURFACE2 = 0xFF2F2759, CREAM = 0xFFFFF6E6,
+            MUTED = 0xFFA9A1CF, CARD_MUTED = 0xFF6B6288, CARD_LINE = 0xFFEFE6D6, CARD_DASH = 0xFFE3D8C4,
+            CORAL = 0xFFFF5A4E, CORAL_TEXT = 0xFFFF7A70, CORAL_DARK = 0xFFD93A2F,
+            YELLOW = 0xFFFFC93C, MINT = 0xFF34D399;
+    static final int[] TEAM_COLORS = {0xFF5B8CFF, 0xFFFF9F1C, 0xFF2DD4BF, 0xFFC084FC};
     static final int[] TIME_OPTIONS = {30, 45, 60, 90, 120};
+    static final String[] TIME_LABELS = {"30s", "45s", "60s", "90s", "2m"};
     static final int[] SCORE_OPTIONS = {10, 20, 30, 50};
     static final int RES_CORRECT = 1, RES_TABOO = 2, RES_SKIP = 3;
-    static final int SCR_SETUP = 0, SCR_READY = 1, SCR_PLAY = 2, SCR_SUMMARY = 3, SCR_END = 4;
+    static final int SCR_SETUP = 0, SCR_READY = 1, SCR_PLAY = 2, SCR_SUMMARY = 3, SCR_END = 4, SCR_COUNTDOWN = 5;
+    static final int W_REGULAR = 0, W_SEMI = 1, W_BOLD = 2;
     static final Locale ES = new Locale("es");
 
     // Settings
@@ -66,17 +72,18 @@ public class MainActivity extends Activity {
     final ArrayList<int[]> turnLog = new ArrayList<int[]>();
     long remainingMs, lastTickAt, lastMarkAt;
     boolean running, paused;
-    int lastBeepSecond;
+    int lastBeepSecond, countdown;
     int screen = SCR_SETUP;
 
     final Handler handler = new Handler();
     ToneGenerator tone;
     Vibrator vibrator;
     SharedPreferences prefs;
+    Typeface[] fonts = new Typeface[3];
     final ArrayList<EditText> nameFields = new ArrayList<EditText>();
 
     // Play screen views
-    TextView timerText, turnPointsText, wordText;
+    TextView timerText, statsText, wordText, undoText, countdownText;
     TextView[] forbiddenViews;
     View cardView, pauseView;
     TimeBar timeBar;
@@ -84,6 +91,12 @@ public class MainActivity extends Activity {
     final Runnable tick = new Runnable() {
         public void run() {
             onTick();
+        }
+    };
+
+    final Runnable countdownStep = new Runnable() {
+        public void run() {
+            onCountdownStep();
         }
     };
 
@@ -99,6 +112,7 @@ public class MainActivity extends Activity {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         setVolumeControlStream(AudioManager.STREAM_MUSIC);
         prefs = getSharedPreferences("tabu", MODE_PRIVATE);
+        loadFonts();
         loadSettings();
         loadDeck();
         try {
@@ -114,12 +128,14 @@ public class MainActivity extends Activity {
     protected void onPause() {
         super.onPause();
         if (screen == SCR_PLAY && running && !paused) pauseTurn();
+        if (screen == SCR_COUNTDOWN) showReady();
         saveDeck();
     }
 
     @Override
     protected void onDestroy() {
         handler.removeCallbacks(tick);
+        handler.removeCallbacks(countdownStep);
         if (tone != null) tone.release();
         super.onDestroy();
     }
@@ -129,6 +145,9 @@ public class MainActivity extends Activity {
         switch (screen) {
             case SCR_SETUP:
                 super.onBackPressed();
+                break;
+            case SCR_COUNTDOWN:
+                showReady();
                 break;
             case SCR_PLAY:
                 if (!paused) pauseTurn();
@@ -141,6 +160,17 @@ public class MainActivity extends Activity {
                 break;
             default:
                 confirmQuit();
+        }
+    }
+
+    void loadFonts() {
+        String[] files = {"fonts/bricolage-regular.ttf", "fonts/bricolage-semibold.ttf", "fonts/bricolage-extrabold.ttf"};
+        for (int i = 0; i < 3; i++) {
+            try {
+                fonts[i] = Typeface.createFromAsset(getAssets(), files[i]);
+            } catch (RuntimeException e) {
+                fonts[i] = i == W_REGULAR ? Typeface.DEFAULT : Typeface.DEFAULT_BOLD;
+            }
         }
     }
 
@@ -211,28 +241,48 @@ public class MainActivity extends Activity {
         screen = SCR_SETUP;
         running = false;
         handler.removeCallbacks(tick);
+        handler.removeCallbacks(countdownStep);
 
         LinearLayout col = column();
-        col.setPadding(dp(20), dp(28), dp(20), dp(24));
+        col.setPadding(dp(20), dp(28), dp(20), dp(16));
 
-        TextView title = text("TABÚ", 56, ACCENT, true);
-        title.setGravity(Gravity.CENTER);
-        col.addView(title);
-        TextView sub = text("Haz que tu equipo adivine la palabra\nsin decir las prohibidas", 15, MUTED, false);
-        sub.setGravity(Gravity.CENTER);
-        col.addView(sub, matchWrap(0, 0, 0, dp(20)));
+        // Header: logo + title + help
+        LinearLayout head = row();
+        ImageView logo = new ImageView(this);
+        logo.setImageResource(R.drawable.logo);
+        head.addView(logo, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        TextView title = text("Tabú", 40, CREAM, W_BOLD);
+        LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+        tlp.leftMargin = dp(12);
+        head.addView(title, tlp);
+        TextView help = circleButton("?", SURFACE, "Cómo se juega");
+        help.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                showRules();
+            }
+        });
+        head.addView(help, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        col.addView(head);
 
-        // Teams
-        LinearLayout teamHeader = new LinearLayout(this);
-        teamHeader.setGravity(Gravity.CENTER_VERTICAL);
-        teamHeader.addView(text("Equipos", 18, TEXT, true), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        TextView minus = button("−", SURFACE, 22);
-        TextView count = text(String.valueOf(numTeams), 22, TEXT, true);
+        TextView sub = text("Describe la palabra sin decir las prohibidas. Gana el equipo que llegue primero a la meta.", 15, MUTED, W_REGULAR);
+        sub.setLineSpacing(0, 1.15f);
+        col.addView(sub, matchWrap(0, dp(14), 0, dp(18)));
+
+        // Teams card
+        LinearLayout teams = card();
+        LinearLayout teamHeader = row();
+        teamHeader.addView(label("EQUIPOS"), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        TextView minus = smallButton("−", "Quitar equipo");
+        TextView count = text(String.valueOf(numTeams), 18, CREAM, W_BOLD);
         count.setGravity(Gravity.CENTER);
-        TextView plus = button("+", SURFACE, 22);
-        teamHeader.addView(minus, new LinearLayout.LayoutParams(dp(48), dp(44)));
-        teamHeader.addView(count, new LinearLayout.LayoutParams(dp(44), ViewGroup.LayoutParams.WRAP_CONTENT));
-        teamHeader.addView(plus, new LinearLayout.LayoutParams(dp(48), dp(44)));
+        TextView plus = smallButton("+", "Agregar equipo");
+        teamHeader.addView(minus, new LinearLayout.LayoutParams(dp(44), dp(40)));
+        teamHeader.addView(count, new LinearLayout.LayoutParams(dp(32), ViewGroup.LayoutParams.WRAP_CONTENT));
+        teamHeader.addView(plus, new LinearLayout.LayoutParams(dp(44), dp(40)));
+        minus.setEnabled(numTeams > 2);
+        minus.setAlpha(numTeams > 2 ? 1f : 0.4f);
+        plus.setEnabled(numTeams < 4);
+        plus.setAlpha(numTeams < 4 ? 1f : 0.4f);
         minus.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
                 if (numTeams > 2) {
@@ -251,63 +301,70 @@ public class MainActivity extends Activity {
                 }
             }
         });
-        col.addView(teamHeader, matchWrap(0, dp(8), 0, dp(8)));
+        teams.addView(teamHeader, matchWrap(0, 0, 0, dp(10)));
 
         nameFields.clear();
         for (int i = 0; i < numTeams; i++) {
+            LinearLayout field = row();
+            field.setPadding(dp(14), 0, dp(14), 0);
+            field.setBackgroundDrawable(round(SURFACE2, 14));
+            field.addView(dot(TEAM_COLORS[i], 14), new LinearLayout.LayoutParams(dp(14), dp(14)));
             EditText et = new EditText(this);
             et.setText(teamNames[i]);
             et.setSingleLine(true);
             et.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_WORDS);
             et.setFilters(new InputFilter[]{new InputFilter.LengthFilter(18)});
-            et.setTextColor(TEXT);
+            et.setTextColor(CREAM);
+            et.setHintTextColor(MUTED);
+            et.setHint("Equipo " + (i + 1));
             et.setTextSize(TypedValue.COMPLEX_UNIT_SP, 17);
-            et.setTypeface(Typeface.DEFAULT_BOLD);
-            et.setPadding(dp(16), dp(12), dp(16), dp(12));
-            GradientDrawable bg = round(SURFACE, 14);
-            bg.setStroke(dp(3), TEAM_COLORS[i]);
-            et.setBackgroundDrawable(bg);
+            et.setTypeface(fonts[W_SEMI]);
+            et.setBackgroundDrawable(null);
+            et.setPadding(dp(12), 0, 0, 0);
+            et.setContentDescription("Nombre del equipo " + (i + 1));
+            field.addView(et, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1));
             nameFields.add(et);
-            col.addView(et, matchWrap(0, 0, 0, dp(10)));
+            teams.addView(field, matchHeight(dp(52), 0, 0, 0, i < numTeams - 1 ? dp(8) : 0));
         }
+        col.addView(teams, matchWrap(0, 0, 0, dp(14)));
 
-        // Time
-        col.addView(text("Tiempo por turno", 18, TEXT, true), matchWrap(0, dp(14), 0, dp(8)));
-        String[] timeLabels = new String[TIME_OPTIONS.length];
-        for (int i = 0; i < TIME_OPTIONS.length; i++) timeLabels[i] = TIME_OPTIONS[i] + "s";
-        col.addView(optionRow(timeLabels, timeIdx, new IntCallback() {
+        // Rules card
+        LinearLayout rules = card();
+        rules.addView(label("TIEMPO POR TURNO"), matchWrap(0, 0, 0, dp(10)));
+        rules.addView(segmented(TIME_LABELS, timeIdx, new IntCallback() {
             public void call(int i) {
                 timeIdx = i;
             }
-        }), matchWrap(0, 0, 0, 0));
-
-        // Score
-        col.addView(text("Puntos para ganar", 18, TEXT, true), matchWrap(0, dp(18), 0, dp(8)));
+        }), matchWrap(0, 0, 0, dp(18)));
+        rules.addView(label("PUNTOS PARA GANAR"), matchWrap(0, 0, 0, dp(10)));
         String[] scoreLabels = new String[SCORE_OPTIONS.length];
         for (int i = 0; i < SCORE_OPTIONS.length; i++) scoreLabels[i] = String.valueOf(SCORE_OPTIONS[i]);
-        col.addView(optionRow(scoreLabels, scoreIdx, new IntCallback() {
+        rules.addView(segmented(scoreLabels, scoreIdx, new IntCallback() {
             public void call(int i) {
                 scoreIdx = i;
             }
-        }), matchWrap(0, 0, 0, 0));
-
-        // Skip penalty
-        col.addView(text("Pasar palabra resta 1 punto", 18, TEXT, true), matchWrap(0, dp(18), 0, dp(8)));
-        col.addView(optionRow(new String[]{"No", "Sí"}, skipPenalty ? 1 : 0, new IntCallback() {
-            public void call(int i) {
-                skipPenalty = i == 1;
+        }), matchWrap(0, 0, 0, dp(10)));
+        rules.addView(switchRow("Pasar resta 1 punto", skipPenalty, new IntCallback() {
+            public void call(int on) {
+                skipPenalty = on == 1;
             }
-        }), matchWrap(0, 0, 0, 0));
-
-        // Sound
-        col.addView(text("Sonido y vibración", 18, TEXT, true), matchWrap(0, dp(18), 0, dp(8)));
-        col.addView(optionRow(new String[]{"No", "Sí"}, soundOn ? 1 : 0, new IntCallback() {
-            public void call(int i) {
-                soundOn = i == 1;
+        }));
+        rules.addView(switchRow("Sonido y vibración", soundOn, new IntCallback() {
+            public void call(int on) {
+                soundOn = on == 1;
             }
-        }), matchWrap(0, 0, 0, 0));
+        }));
+        col.addView(rules, matchWrap(0, 0, 0, 0));
 
-        TextView play = button("¡JUGAR!", ACCENT, 24);
+        ScrollView sv = new ScrollView(this);
+        sv.setFillViewport(true);
+        sv.addView(col);
+
+        // Pinned call to action
+        LinearLayout bottom = column();
+        bottom.setGravity(Gravity.CENTER_HORIZONTAL);
+        bottom.setPadding(dp(20), dp(12), dp(20), dp(16));
+        TextView play = bigButton("¡Jugar!", YELLOW, 24);
         play.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
                 readNames();
@@ -315,24 +372,13 @@ public class MainActivity extends Activity {
                 newGame();
             }
         });
-        col.addView(play, matchHeight(dp(64), 0, dp(28), 0, dp(12)));
+        bottom.addView(play, matchHeight(dp(68), 0, 0, 0, dp(8)));
+        bottom.addView(text(Words.CARDS.length + " tarjetas · sin repetir", 13, MUTED, W_REGULAR));
 
-        TextView rules = button("Cómo se juega", SURFACE, 17);
-        rules.setOnClickListener(new View.OnClickListener() {
-            public void onClick(View v) {
-                showRules();
-            }
-        });
-        col.addView(rules, matchHeight(dp(52), 0, 0, 0, 0));
-
-        TextView info = text(Words.CARDS.length + " tarjetas", 13, MUTED, false);
-        info.setGravity(Gravity.CENTER);
-        col.addView(info, matchWrap(0, dp(16), 0, 0));
-
-        ScrollView sv = new ScrollView(this);
-        sv.setFillViewport(true);
-        sv.addView(col);
-        setContentView(sv);
+        LinearLayout root = column();
+        root.addView(sv, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        root.addView(bottom, matchWrap(0, 0, 0, 0));
+        setContentView(root);
     }
 
     void readNames() {
@@ -345,15 +391,16 @@ public class MainActivity extends Activity {
     void showRules() {
         new AlertDialog.Builder(this)
                 .setTitle("Cómo se juega")
-                .setMessage("• Formen 2 a 4 equipos y siéntense intercalados.\n\n"
-                        + "• En cada turno, una persona toma el celular y describe la palabra grande "
-                        + "para que su equipo la adivine, SIN decir ninguna de las palabras prohibidas "
-                        + "(ni partes de ellas, ni la palabra misma).\n\n"
-                        + "• Prohibido hacer gestos, sonidos, deletrear o decir \"suena como…\".\n\n"
-                        + "• Un integrante de otro equipo mira la pantalla y vigila: si se dice una "
-                        + "palabra prohibida, presiona TABÚ (−1 punto).\n\n"
-                        + "• ¡CORRECTO! suma 1 punto. PASAR salta la palabra (puede restar 1 si lo activas).\n\n"
-                        + "• Al acabar el tiempo, el celular pasa al siguiente equipo con una nueva persona describiendo.\n\n"
+                .setMessage("• Formen de 2 a 4 equipos y siéntense intercalados.\n\n"
+                        + "• En cada turno, una persona describe la palabra grande para que su equipo "
+                        + "la adivine, SIN decir ninguna de las palabras prohibidas (ni la palabra misma, "
+                        + "ni partes de ellas).\n\n"
+                        + "• No vale hacer gestos o sonidos, deletrear ni decir \"suena como…\".\n\n"
+                        + "• Alguien de otro equipo mira la pantalla: si se dice una palabra prohibida, "
+                        + "presiona TABÚ (−1).\n\n"
+                        + "• ¡CORRECTO! suma 1. PASAR salta la palabra (puede restar 1 si lo activas). "
+                        + "Si alguien toca un botón por error, usa Deshacer.\n\n"
+                        + "• Al acabar el tiempo, el celular pasa al siguiente equipo con otra persona describiendo.\n\n"
                         + "• Gana el primer equipo en llegar a la meta al cerrar una ronda completa.")
                 .setPositiveButton("¡Entendido!", null)
                 .show();
@@ -380,76 +427,79 @@ public class MainActivity extends Activity {
         screen = SCR_READY;
         running = false;
         handler.removeCallbacks(tick);
+        handler.removeCallbacks(countdownStep);
+        int teamColor = TEAM_COLORS[currentTeam];
 
         LinearLayout col = column();
-        col.setPadding(dp(20), dp(24), dp(20), dp(20));
 
-        TextView round = text("RONDA " + (turnsPlayed / numTeams + 1) + "  ·  META " + targetScore() + " PUNTOS", 14, MUTED, true);
-        round.setGravity(Gravity.CENTER);
-        col.addView(round);
+        // Team-colored handoff panel
+        LinearLayout panel = column();
+        panel.setPadding(dp(24), dp(28), dp(24), dp(32));
+        GradientDrawable pbg = new GradientDrawable();
+        pbg.setColor(teamColor);
+        float r = dp(36);
+        pbg.setCornerRadii(new float[]{0, 0, 0, 0, r, r, r, r});
+        panel.setBackgroundDrawable(pbg);
+        LinearLayout meta = row();
+        meta.addView(text("RONDA " + (turnsPlayed / numTeams + 1), 13, INK, W_BOLD), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        meta.addView(text("META " + targetScore(), 13, INK, W_BOLD));
+        panel.addView(meta);
+        panel.addView(text("Pasa el celular a", 18, INK, W_SEMI), matchWrap(0, dp(32), 0, 0));
+        TextView name = text(teamNames[currentTeam], 48, INK, W_BOLD);
+        name.setLineSpacing(0, 0.9f);
+        panel.addView(name, matchWrap(0, 0, 0, dp(12)));
+        TextView hint = text("Una persona describe. Su equipo adivina. Alguien de otro equipo vigila la pantalla.", 16, INK, W_REGULAR);
+        hint.setLineSpacing(0, 1.15f);
+        panel.addView(hint);
+        col.addView(panel, matchWrap(0, 0, 0, 0));
 
-        TextView turnOf = text("Turno de", 20, TEXT, false);
-        turnOf.setGravity(Gravity.CENTER);
-        col.addView(turnOf, matchWrap(0, dp(18), 0, 0));
+        // Scoreboard with progress toward the goal
+        LinearLayout board = column();
+        board.setPadding(dp(20), dp(24), dp(20), 0);
+        board.addView(label("MARCADOR"), matchWrap(0, 0, 0, dp(12)));
+        for (int i = 0; i < numTeams; i++) {
+            boolean me = i == currentTeam;
+            LinearLayout line = row();
+            line.addView(text(teamNames[i], 17, me ? CREAM : MUTED, me ? W_BOLD : W_SEMI), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+            line.addView(text(String.valueOf(scores[i]), 17, me ? CREAM : MUTED, W_BOLD));
+            board.addView(line, matchWrap(0, 0, 0, dp(6)));
+            TimeBar bar = new TimeBar(this, SURFACE2);
+            bar.set(scores[i] / (float) targetScore(), TEAM_COLORS[i]);
+            board.addView(bar, matchHeight(dp(10), 0, 0, 0, dp(14)));
+        }
 
-        TextView team = text(teamNames[currentTeam], 40, TEAM_COLORS[currentTeam], true);
-        team.setGravity(Gravity.CENTER);
-        col.addView(team, matchWrap(0, 0, 0, dp(16)));
+        ScrollView sv = new ScrollView(this);
+        sv.setFillViewport(true);
+        LinearLayout top = column();
+        top.addView(col);
+        top.addView(board);
+        sv.addView(top);
 
-        TextView hint = text("Pasa el celular a quien va a describir. Su equipo adivina; "
-                + "alguien del otro equipo vigila las palabras prohibidas.", 16, TEXT, false);
-        hint.setGravity(Gravity.CENTER);
-        hint.setPadding(dp(16), dp(14), dp(16), dp(14));
-        hint.setBackgroundDrawable(round(SURFACE, 16));
-        col.addView(hint, matchWrap(0, 0, 0, dp(18)));
-
-        col.addView(scoreboard(currentTeam), matchWrap(0, 0, 0, 0));
-
-        View spacer = new View(this);
-        col.addView(spacer, new LinearLayout.LayoutParams(1, 0, 1));
-
-        TextView start = button("¡EMPEZAR!", ACCENT, 26);
+        LinearLayout bottom = column();
+        bottom.setGravity(Gravity.CENTER_HORIZONTAL);
+        bottom.setPadding(dp(20), dp(12), dp(20), dp(8));
+        TextView start = bigButton("Estoy listo", YELLOW, 26);
         start.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
-                startTurn();
+                startCountdown();
             }
         });
-        col.addView(start, matchHeight(dp(72), 0, dp(20), 0, dp(10)));
-
-        TextView quit = button("Salir al menú", BG, 15);
-        quit.setTextColor(MUTED);
+        bottom.addView(start, matchHeight(dp(76), 0, 0, 0, dp(8)));
+        bottom.addView(text("Cuenta 3, 2, 1 y arranca el reloj", 13, MUTED, W_REGULAR));
+        TextView quit = text("Salir al menú", 15, MUTED, W_SEMI);
+        quit.setGravity(Gravity.CENTER);
+        quit.setClickable(true);
         quit.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
                 confirmQuit();
             }
         });
-        col.addView(quit, matchHeight(dp(44), 0, 0, 0, 0));
+        bottom.addView(quit, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)));
 
-        ScrollView sv = new ScrollView(this);
-        sv.setFillViewport(true);
-        sv.addView(col);
-        setContentView(sv);
-    }
-
-    View scoreboard(int highlight) {
-        LinearLayout box = column();
-        box.setPadding(dp(16), dp(10), dp(16), dp(10));
-        box.setBackgroundDrawable(round(SURFACE, 16));
-        for (int i = 0; i < numTeams; i++) {
-            LinearLayout row = new LinearLayout(this);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setPadding(0, dp(6), 0, dp(6));
-            View dot = new View(this);
-            dot.setBackgroundDrawable(round(TEAM_COLORS[i], 7));
-            LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(dp(14), dp(14));
-            dlp.rightMargin = dp(12);
-            row.addView(dot, dlp);
-            TextView name = text(teamNames[i], 18, i == highlight ? TEXT : MUTED, i == highlight);
-            row.addView(name, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-            row.addView(text(String.valueOf(scores[i]), 22, i == highlight ? TEXT : MUTED, true));
-            box.addView(row);
-        }
-        return box;
+        LinearLayout root = column();
+        root.addView(sv, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        root.addView(bottom, matchWrap(0, 0, 0, 0));
+        setContentView(root);
     }
 
     void confirmQuit() {
@@ -465,6 +515,40 @@ public class MainActivity extends Activity {
                 .show();
     }
 
+    // ------------------------------------------------------------------ 3-2-1 countdown
+
+    void startCountdown() {
+        screen = SCR_COUNTDOWN;
+        countdown = 3;
+        LinearLayout root = column();
+        root.setGravity(Gravity.CENTER);
+        root.setBackgroundColor(TEAM_COLORS[currentTeam]);
+        root.addView(text("¡Prepárate!", 22, INK, W_BOLD));
+        countdownText = text("3", 180, INK, W_BOLD);
+        countdownText.setGravity(Gravity.CENTER);
+        root.addView(countdownText, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        root.addView(text(teamNames[currentTeam], 20, INK, W_SEMI));
+        setContentView(root);
+        beep(ToneGenerator.TONE_PROP_BEEP, 120);
+        handler.postDelayed(countdownStep, 1000);
+    }
+
+    void onCountdownStep() {
+        if (screen != SCR_COUNTDOWN) return;
+        countdown--;
+        if (countdown <= 0) {
+            beep(ToneGenerator.TONE_PROP_BEEP2, 200);
+            startTurn();
+            return;
+        }
+        countdownText.setText(String.valueOf(countdown));
+        countdownText.setScaleX(1.3f);
+        countdownText.setScaleY(1.3f);
+        countdownText.animate().scaleX(1f).scaleY(1f).setDuration(250).start();
+        beep(ToneGenerator.TONE_PROP_BEEP, 120);
+        handler.postDelayed(countdownStep, 1000);
+    }
+
     // ------------------------------------------------------------------ play screen
 
     void startTurn() {
@@ -475,7 +559,7 @@ public class MainActivity extends Activity {
         lastBeepSecond = -1;
         lastMarkAt = 0;
         showPlay();
-        nextWord();
+        nextWord(false);
         lastTickAt = SystemClock.elapsedRealtime();
         handler.removeCallbacks(tick);
         handler.post(tick);
@@ -486,73 +570,82 @@ public class MainActivity extends Activity {
         int teamColor = TEAM_COLORS[currentTeam];
 
         LinearLayout col = column();
-        col.setPadding(dp(16), dp(12), dp(16), dp(16));
+        col.setPadding(dp(16), dp(16), dp(16), dp(8));
 
-        // Top bar: team, timer, pause
-        LinearLayout top = new LinearLayout(this);
-        top.setGravity(Gravity.CENTER_VERTICAL);
-        TextView team = text(teamNames[currentTeam], 15, TEXT, true);
+        // Top bar: team pill, running tally, pause
+        LinearLayout top = row();
+        TextView team = text(teamNames[currentTeam], 15, INK, W_BOLD);
         team.setSingleLine(true);
-        team.setPadding(dp(12), dp(6), dp(12), dp(6));
-        team.setBackgroundDrawable(round(teamColor, 20));
-        LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
-        top.addView(wrapLeft(team), tlp);
-        timerText = text("", 44, TEXT, true);
-        timerText.setGravity(Gravity.CENTER);
-        top.addView(timerText, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        TextView pause = button("❚❚", SURFACE, 18);
+        team.setGravity(Gravity.CENTER_VERTICAL);
+        team.setPadding(dp(14), 0, dp(14), 0);
+        team.setBackgroundDrawable(round(teamColor, 18));
+        top.addView(team, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)));
+        top.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1));
+        statsText = text("", 15, CREAM, W_BOLD);
+        statsText.setGravity(Gravity.CENTER_VERTICAL);
+        statsText.setPadding(dp(12), 0, dp(12), 0);
+        statsText.setBackgroundDrawable(round(SURFACE, 18));
+        top.addView(statsText, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)));
+        ImageView pause = new ImageView(this);
+        pause.setImageResource(R.drawable.ic_pause);
+        pause.setScaleType(ImageView.ScaleType.CENTER);
+        pause.setBackgroundDrawable(pressable(SURFACE, 22));
+        pause.setClickable(true);
+        pause.setContentDescription("Pausar");
         pause.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
                 pauseTurn();
             }
         });
-        LinearLayout pauseWrap = new LinearLayout(this);
-        pauseWrap.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
-        pauseWrap.addView(pause, new LinearLayout.LayoutParams(dp(56), dp(48)));
-        top.addView(pauseWrap, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(dp(44), dp(44));
+        plp.leftMargin = dp(10);
+        top.addView(pause, plp);
         col.addView(top);
 
-        timeBar = new TimeBar(this);
-        col.addView(timeBar, matchHeight(dp(10), 0, dp(6), 0, dp(6)));
+        // Timer
+        LinearLayout timer = row();
+        timerText = text("", 44, CREAM, W_BOLD);
+        timer.addView(timerText, new LinearLayout.LayoutParams(dp(112), ViewGroup.LayoutParams.WRAP_CONTENT));
+        timeBar = new TimeBar(this, SURFACE2);
+        timer.addView(timeBar, new LinearLayout.LayoutParams(0, dp(12), 1));
+        col.addView(timer, matchWrap(0, dp(6), 0, dp(10)));
 
-        turnPointsText = text("", 16, MUTED, true);
-        turnPointsText.setGravity(Gravity.CENTER);
-        col.addView(turnPointsText, matchWrap(0, 0, 0, dp(10)));
-
-        // Card
+        // Card (cream, with a team-colored "lift")
         FrameLayout frame = new FrameLayout(this);
         LinearLayout card = column();
-        card.setBackgroundDrawable(round(0xFFFFFFFF, 24));
-        LinearLayout head = column();
-        GradientDrawable headBg = new GradientDrawable();
-        headBg.setColor(teamColor);
-        float r = dp(24);
-        headBg.setCornerRadii(new float[]{r, r, r, r, 0, 0, 0, 0});
-        head.setBackgroundDrawable(headBg);
-        head.setPadding(dp(16), dp(14), dp(16), dp(18));
-        TextView guess = text("DESCRIBE", 13, 0xCCFFFFFF, true);
-        guess.setGravity(Gravity.CENTER);
-        head.addView(guess);
-        wordText = text("", 34, TEXT, true);
+        LayerDrawable cardBg = new LayerDrawable(new Drawable[]{round(teamColor, 28), round(CREAM, 28)});
+        cardBg.setLayerInset(1, 0, 0, 0, dp(8));
+        card.setBackgroundDrawable(cardBg);
+        card.setPadding(dp(22), dp(22), dp(22), dp(8 + 12));
+        TextView describe = text("DESCRIBE", 13, CARD_MUTED, W_BOLD);
+        describe.setGravity(Gravity.CENTER);
+        card.addView(describe, matchWrap(0, 0, 0, 0));
+        wordText = text("", 46, INK, W_BOLD);
         wordText.setGravity(Gravity.CENTER);
-        head.addView(wordText);
-        card.addView(head, matchWrap(0, 0, 0, 0));
-
-        TextView noSay = text("NO PUEDES DECIR", 13, RED, true);
+        wordText.setLineSpacing(0, 0.95f);
+        card.addView(wordText, matchWrap(0, 0, 0, dp(16)));
+        View dash = new View(this);
+        GradientDrawable dashBg = new GradientDrawable();
+        dashBg.setShape(GradientDrawable.LINE);
+        dashBg.setStroke(dp(2), CARD_DASH, dp(8), dp(6));
+        dash.setBackgroundDrawable(dashBg);
+        dash.setLayerType(View.LAYER_TYPE_SOFTWARE, null);
+        card.addView(dash, matchHeight(dp(4), 0, 0, 0, dp(12)));
+        TextView noSay = text("NO PUEDES DECIR", 13, CORAL_DARK, W_BOLD);
         noSay.setGravity(Gravity.CENTER);
-        card.addView(noSay, matchWrap(0, dp(14), 0, dp(4)));
-
-        LinearLayout forb = column();
-        forb.setGravity(Gravity.CENTER);
+        card.addView(noSay, matchWrap(0, 0, 0, dp(2)));
         forbiddenViews = new TextView[5];
         for (int i = 0; i < 5; i++) {
-            TextView f = text("", 24, INK, true);
+            TextView f = text("", 26, INK, W_SEMI);
             f.setGravity(Gravity.CENTER);
             forbiddenViews[i] = f;
-            forb.addView(f, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+            card.addView(f, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+            if (i < 4) {
+                View sep = new View(this);
+                sep.setBackgroundColor(CARD_LINE);
+                card.addView(sep, matchHeight(dp(1), 0, 0, 0, 0));
+            }
         }
-        forb.setPadding(dp(12), 0, dp(12), dp(14));
-        card.addView(forb, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         cardView = card;
         frame.addView(card, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
@@ -561,12 +654,12 @@ public class MainActivity extends Activity {
         frame.addView(pauseView, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         col.addView(frame, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
 
-        // Action buttons
-        LinearLayout actions = new LinearLayout(this);
-        actions.setBaselineAligned(false); // keep 1- and 2-line buttons top-aligned
-        TextView taboo = button("TABÚ\n−1", RED, 20);
-        TextView skip = button("PASAR" + (skipPenalty ? "\n−1" : ""), GREY, 18);
-        TextView ok = button("¡CORRECTO!\n+1", GREEN, 20);
+        // Actions: small Tabú / Pasar, big Correcto under the thumb
+        LinearLayout pair = row();
+        pair.setBaselineAligned(false);
+        TextView taboo = bigButton("Tabú −1", CORAL, 20);
+        TextView skip = bigButton(skipPenalty ? "Pasar −1" : "Pasar", SURFACE2, 20);
+        skip.setTextColor(CREAM);
         taboo.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
                 mark(RES_TABOO);
@@ -577,66 +670,87 @@ public class MainActivity extends Activity {
                 mark(RES_SKIP);
             }
         });
+        LinearLayout.LayoutParams l1 = new LinearLayout.LayoutParams(0, dp(64), 1);
+        l1.rightMargin = dp(10);
+        pair.addView(taboo, l1);
+        pair.addView(skip, new LinearLayout.LayoutParams(0, dp(64), 1));
+        col.addView(pair, matchWrap(0, dp(16), 0, dp(10)));
+        TextView ok = bigButton("¡Correcto! +1", MINT, 26);
         ok.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
                 mark(RES_CORRECT);
             }
         });
-        LinearLayout.LayoutParams a1 = new LinearLayout.LayoutParams(0, dp(92), 1f);
-        a1.rightMargin = dp(8);
-        LinearLayout.LayoutParams a2 = new LinearLayout.LayoutParams(0, dp(92), 0.8f);
-        a2.rightMargin = dp(8);
-        LinearLayout.LayoutParams a3 = new LinearLayout.LayoutParams(0, dp(92), 1.4f);
-        actions.addView(taboo, a1);
-        actions.addView(skip, a2);
-        actions.addView(ok, a3);
-        col.addView(actions, matchWrap(0, dp(14), 0, 0));
+        col.addView(ok, matchHeight(dp(80), 0, 0, 0, 0));
+        undoText = text("", 14, MUTED, W_SEMI);
+        undoText.setGravity(Gravity.CENTER);
+        undoText.setSingleLine(true);
+        undoText.setClickable(true);
+        undoText.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                undo();
+            }
+        });
+        col.addView(undoText, matchHeight(dp(40), 0, dp(2), 0, 0));
 
         setContentView(col);
         updateTimerViews();
-        updateTurnPoints();
+        updateStats();
     }
 
     View buildPauseOverlay() {
         LinearLayout box = column();
         box.setGravity(Gravity.CENTER);
         box.setPadding(dp(24), dp(24), dp(24), dp(24));
-        box.setBackgroundDrawable(round(SURFACE, 24));
+        box.setBackgroundDrawable(round(SURFACE, 28));
         box.setClickable(true);
-        TextView t = text("PAUSA", 40, TEXT, true);
+        TextView t = text("Pausa", 44, CREAM, W_BOLD);
         t.setGravity(Gravity.CENTER);
-        box.addView(t, matchWrap(0, 0, 0, dp(24)));
-        TextView resume = button("Continuar", GREEN, 20);
+        box.addView(t, matchWrap(0, 0, 0, dp(4)));
+        TextView s = text("La tarjeta está oculta", 15, MUTED, W_REGULAR);
+        s.setGravity(Gravity.CENTER);
+        box.addView(s, matchWrap(0, 0, 0, dp(24)));
+        TextView resume = bigButton("Continuar", YELLOW, 20);
         resume.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
                 resumeTurn();
             }
         });
         box.addView(resume, matchHeight(dp(60), 0, 0, 0, dp(12)));
-        TextView end = button("Terminar turno", GREY, 17);
+        TextView end = bigButton("Terminar turno", SURFACE2, 17);
+        end.setTextColor(CREAM);
         end.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
                 endTurn(false);
             }
         });
-        box.addView(end, matchHeight(dp(52), 0, 0, 0, dp(12)));
-        TextView quit = button("Salir al menú", RED, 17);
+        box.addView(end, matchHeight(dp(54), 0, 0, 0, dp(12)));
+        TextView quit = bigButton("Salir al menú", SURFACE2, 17);
+        quit.setTextColor(CORAL_TEXT);
         quit.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
                 confirmQuit();
             }
         });
-        box.addView(quit, matchHeight(dp(52), 0, 0, 0, 0));
+        box.addView(quit, matchHeight(dp(54), 0, 0, 0, 0));
         return box;
     }
 
-    void nextWord() {
+    void nextWord(boolean animate) {
         currentCard = drawCard();
-        String[] c = Words.card(currentCard);
-        wordText.setText(c[0]);
-        wordText.setTextSize(TypedValue.COMPLEX_UNIT_SP, c[0].length() > 14 ? 26 : c[0].length() > 10 ? 30 : 36);
-        for (int i = 0; i < 5; i++) {
-            forbiddenViews[i].setText(i + 1 < c.length ? c[i + 1].toUpperCase(ES) : "");
+        showCard(currentCard, animate);
+    }
+
+    void showCard(int card, boolean animate) {
+        String[] c = Words.card(card);
+        String w = c[0].substring(0, 1) + c[0].substring(1).toLowerCase(ES);
+        wordText.setText(w);
+        wordText.setTextSize(TypedValue.COMPLEX_UNIT_SP, w.length() > 14 ? 32 : w.length() > 10 ? 38 : 46);
+        for (int i = 0; i < 5; i++) forbiddenViews[i].setText(i + 1 < c.length ? c[i + 1] : "");
+        if (animate) {
+            cardView.setTranslationX(dp(36));
+            cardView.setAlpha(0f);
+            cardView.animate().translationX(0).alpha(1f).setDuration(160).start();
         }
     }
 
@@ -655,8 +769,18 @@ public class MainActivity extends Activity {
         } else {
             beep(ToneGenerator.TONE_PROP_NACK, 150);
         }
-        updateTurnPoints();
-        nextWord();
+        updateStats();
+        nextWord(true);
+    }
+
+    /** Takes back the last tap and shows that card again. */
+    void undo() {
+        if (!running || paused || turnLog.isEmpty()) return;
+        int[] last = turnLog.remove(turnLog.size() - 1);
+        if (deckPos > 0 && deck[deckPos - 1] == currentCard) deckPos--; // current card goes back on the deck
+        currentCard = last[0];
+        showCard(currentCard, false);
+        updateStats();
     }
 
     void onTick() {
@@ -682,16 +806,25 @@ public class MainActivity extends Activity {
         if (timerText == null) return;
         int secs = (int) ((remainingMs + 999) / 1000);
         timerText.setText(String.format(Locale.US, "%d:%02d", secs / 60, secs % 60));
-        timerText.setTextColor(secs <= 10 ? RED : TEXT);
+        timerText.setTextColor(secs <= 10 ? CORAL_TEXT : CREAM);
         float frac = remainingMs / (turnSeconds() * 1000f);
-        timeBar.set(frac, frac > 0.5f ? GREEN : frac > 0.2f ? YELLOW : RED);
+        timeBar.set(frac, frac > 0.2f ? YELLOW : CORAL);
     }
 
-    void updateTurnPoints() {
-        int correct = 0;
-        for (int[] e : turnLog) if (e[1] == RES_CORRECT) correct++;
-        int pts = turnPoints();
-        turnPointsText.setText("Aciertos: " + correct + "   ·   Puntos del turno: " + (pts > 0 ? "+" : "") + pts);
+    void updateStats() {
+        int correct = 0, taboo = 0;
+        for (int[] e : turnLog) {
+            if (e[1] == RES_CORRECT) correct++;
+            else if (e[1] == RES_TABOO) taboo++;
+        }
+        statsText.setText("✓ " + correct + "   ✗ " + taboo);
+        if (turnLog.isEmpty()) {
+            undoText.setText("");
+            undoText.setEnabled(false);
+        } else {
+            undoText.setText("↶ Deshacer: " + Words.card(turnLog.get(turnLog.size() - 1)[0])[0].toLowerCase(ES));
+            undoText.setEnabled(true);
+        }
     }
 
     int pointsFor(int result) {
@@ -744,77 +877,97 @@ public class MainActivity extends Activity {
     void showSummary(boolean timeUp) {
         screen = SCR_SUMMARY;
         LinearLayout col = column();
-        col.setPadding(dp(20), dp(24), dp(20), dp(16));
+        col.setPadding(dp(20), dp(28), dp(20), 0);
 
-        TextView title = text(timeUp ? "¡TIEMPO!" : "FIN DEL TURNO", 40, ACCENT, true);
-        title.setGravity(Gravity.CENTER);
-        col.addView(title);
+        col.addView(text(timeUp ? "¡SE ACABÓ EL TIEMPO!" : "FIN DEL TURNO", 13, YELLOW, W_BOLD));
+        LinearLayout head = row();
+        TextView team = text(teamNames[currentTeam], 32, CREAM, W_BOLD);
+        head.addView(team, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        final TextView total = text("", 44, TEAM_COLORS[currentTeam], W_BOLD);
+        head.addView(total);
+        col.addView(head, matchWrap(0, dp(2), 0, dp(14)));
 
-        final TextView total = text("", 24, TEAM_COLORS[currentTeam], true);
-        total.setGravity(Gravity.CENTER);
-        col.addView(total, matchWrap(0, dp(4), 0, dp(4)));
+        LinearLayout stats = row();
+        final TextView[] statNums = new TextView[3];
+        String[] statLabels = {"aciertos", "tabú", "pasadas"};
+        int[] statColors = {MINT, CORAL_TEXT, MUTED};
+        for (int i = 0; i < 3; i++) {
+            LinearLayout tile = column();
+            tile.setPadding(dp(14), dp(10), dp(14), dp(12));
+            tile.setBackgroundDrawable(round(SURFACE, 16));
+            statNums[i] = text("0", 26, statColors[i], W_BOLD);
+            tile.addView(statNums[i]);
+            tile.addView(text(statLabels[i], 13, MUTED, W_REGULAR));
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+            if (i < 2) lp.rightMargin = dp(8);
+            stats.addView(tile, lp);
+        }
+        col.addView(stats, matchWrap(0, 0, 0, dp(16)));
 
-        TextView hint = text(turnLog.isEmpty() ? "No se jugó ninguna palabra." : "Toca una palabra para corregir su resultado", 14, MUTED, false);
-        hint.setGravity(Gravity.CENTER);
-        col.addView(hint, matchWrap(0, 0, 0, dp(12)));
+        TextView hint = text(turnLog.isEmpty() ? "No se jugó ninguna palabra." : "¿Algo quedó mal marcado? Toca la palabra para cambiarla.", 14, MUTED, W_REGULAR);
+        col.addView(hint, matchWrap(0, 0, 0, dp(10)));
+
+        final Runnable refresh = new Runnable() {
+            public void run() {
+                int[] counts = new int[3];
+                for (int[] e : turnLog) counts[e[1] - 1]++;
+                for (int i = 0; i < 3; i++) statNums[i].setText(String.valueOf(counts[i]));
+                int p = turnPoints();
+                total.setText(p > 0 ? "+" + p : p < 0 ? "−" + (-p) : "0");
+            }
+        };
 
         LinearLayout list = column();
         for (int i = 0; i < turnLog.size(); i++) {
             final int[] entry = turnLog.get(i);
-            final LinearLayout row = new LinearLayout(this);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setPadding(dp(14), dp(12), dp(14), dp(12));
-            row.setClickable(true);
-            final TextView icon = text("", 20, TEXT, true);
-            icon.setGravity(Gravity.CENTER);
-            final TextView word = text(Words.card(entry[0])[0], 18, TEXT, true);
-            final TextView pts = text("", 18, TEXT, true);
-            row.addView(icon, new LinearLayout.LayoutParams(dp(36), ViewGroup.LayoutParams.WRAP_CONTENT));
+            final LinearLayout item = row();
+            item.setPadding(dp(14), 0, dp(16), 0);
+            item.setClickable(true);
+            item.setBackgroundDrawable(pressable(SURFACE, 16));
+            final TextView badge = text("", 16, INK, W_BOLD);
+            badge.setGravity(Gravity.CENTER);
+            final TextView word = text(Words.card(entry[0])[0].substring(0, 1) + Words.card(entry[0])[0].substring(1).toLowerCase(ES), 18, CREAM, W_SEMI);
+            final TextView pts = text("", 17, CREAM, W_BOLD);
+            item.addView(badge, new LinearLayout.LayoutParams(dp(30), dp(30)));
             LinearLayout.LayoutParams wlp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
-            wlp.leftMargin = dp(8);
-            row.addView(word, wlp);
-            row.addView(pts);
-            styleSummaryRow(row, icon, pts, entry[1]);
-            row.setOnClickListener(new View.OnClickListener() {
+            wlp.leftMargin = dp(12);
+            item.addView(word, wlp);
+            item.addView(pts);
+            styleSummaryRow(badge, word, pts, entry[1]);
+            item.setOnClickListener(new View.OnClickListener() {
                 public void onClick(View v) {
                     entry[1] = entry[1] == RES_CORRECT ? RES_TABOO : entry[1] == RES_TABOO ? RES_SKIP : RES_CORRECT;
-                    styleSummaryRow(row, icon, pts, entry[1]);
-                    updateSummaryTotal(total);
+                    styleSummaryRow(badge, word, pts, entry[1]);
+                    refresh.run();
                 }
             });
-            list.addView(row, matchWrap(0, 0, 0, dp(8)));
+            list.addView(item, matchHeight(dp(56), 0, 0, 0, dp(8)));
         }
-        updateSummaryTotal(total);
+        refresh.run();
 
         ScrollView sv = new ScrollView(this);
         sv.addView(list);
         col.addView(sv, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
 
-        TextView next = button("CONTINUAR", ACCENT, 22);
+        TextView next = bigButton("Continuar", YELLOW, 22);
         next.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
                 applyTurn();
             }
         });
-        col.addView(next, matchHeight(dp(64), 0, dp(12), 0, 0));
+        col.addView(next, matchHeight(dp(68), 0, dp(12), 0, dp(16)));
         setContentView(col);
     }
 
-    void styleSummaryRow(View row, TextView icon, TextView pts, int result) {
-        int color = result == RES_CORRECT ? GREEN : result == RES_TABOO ? RED : GREY;
-        icon.setText(result == RES_CORRECT ? "✓" : result == RES_TABOO ? "✗" : "↷");
-        icon.setTextColor(color);
+    void styleSummaryRow(TextView badge, TextView word, TextView pts, int result) {
+        int color = result == RES_CORRECT ? MINT : result == RES_TABOO ? CORAL : SURFACE2;
+        badge.setText(result == RES_CORRECT ? "✓" : result == RES_TABOO ? "✗" : "↷");
+        badge.setTextColor(result == RES_SKIP ? MUTED : INK);
+        badge.setBackgroundDrawable(round(color, 15));
+        word.setTextColor(result == RES_SKIP ? MUTED : CREAM);
         int p = pointsFor(result);
-        pts.setText(p > 0 ? "+" + p : String.valueOf(p));
-        pts.setTextColor(color);
-        GradientDrawable bg = round(SURFACE, 14);
-        bg.setStroke(dp(2), color);
-        row.setBackgroundDrawable(bg);
-    }
-
-    void updateSummaryTotal(TextView total) {
-        int p = turnPoints();
-        total.setText(teamNames[currentTeam] + ": " + (p > 0 ? "+" : "") + p + (Math.abs(p) == 1 ? " punto" : " puntos"));
+        pts.setText(p > 0 ? "+" + p : p < 0 ? "−" + (-p) : "0");
+        pts.setTextColor(result == RES_CORRECT ? MINT : result == RES_TABOO ? CORAL_TEXT : MUTED);
     }
 
     void applyTurn() {
@@ -849,21 +1002,26 @@ public class MainActivity extends Activity {
     void showEnd(int winner) {
         screen = SCR_END;
         beep(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 600);
-        LinearLayout col = column();
-        col.setPadding(dp(20), dp(32), dp(20), dp(20));
-        col.setGravity(Gravity.CENTER_HORIZONTAL);
 
-        TextView trophy = text("🏆", 72, TEXT, false);
-        trophy.setGravity(Gravity.CENTER);
-        col.addView(trophy, matchWrap(0, 0, 0, 0));
-        TextView won = text("¡GANADOR!", 22, MUTED, true);
-        won.setGravity(Gravity.CENTER);
-        col.addView(won, matchWrap(0, dp(8), 0, 0));
-        TextView name = text(teamNames[winner], 42, TEAM_COLORS[winner], true);
+        LinearLayout panel = column();
+        panel.setGravity(Gravity.CENTER_HORIZONTAL);
+        panel.setPadding(dp(24), dp(40), dp(24), dp(32));
+        GradientDrawable pbg = new GradientDrawable();
+        pbg.setColor(TEAM_COLORS[winner]);
+        float r = dp(36);
+        pbg.setCornerRadii(new float[]{0, 0, 0, 0, r, r, r, r});
+        panel.setBackgroundDrawable(pbg);
+        ImageView trophy = new ImageView(this);
+        trophy.setImageResource(R.drawable.ic_trophy);
+        panel.addView(trophy, new LinearLayout.LayoutParams(dp(88), dp(88)));
+        panel.addView(text("¡GANARON!", 15, INK, W_BOLD), wrap(0, dp(8), 0, dp(2)));
+        TextView name = text(teamNames[winner], 48, INK, W_BOLD);
         name.setGravity(Gravity.CENTER);
-        col.addView(name, matchWrap(0, 0, 0, dp(24)));
+        name.setLineSpacing(0, 0.9f);
+        panel.addView(name, matchWrap(0, 0, 0, dp(6)));
+        int rounds = turnsPlayed / numTeams;
+        panel.addView(text(scores[winner] + " puntos en " + rounds + (rounds == 1 ? " ronda" : " rondas"), 17, INK, W_SEMI), wrap(0, 0, 0, 0));
 
-        // Sorted scoreboard
         Integer[] order = new Integer[numTeams];
         for (int i = 0; i < numTeams; i++) order[i] = i;
         Arrays.sort(order, new Comparator<Integer>() {
@@ -871,43 +1029,54 @@ public class MainActivity extends Activity {
                 return scores[b] - scores[a];
             }
         });
-        LinearLayout box = column();
-        box.setPadding(dp(16), dp(10), dp(16), dp(10));
-        box.setBackgroundDrawable(round(SURFACE, 16));
+        LinearLayout ranking = column();
+        ranking.setPadding(dp(20), dp(24), dp(20), 0);
         for (int k = 0; k < numTeams; k++) {
             int i = order[k];
-            LinearLayout row = new LinearLayout(this);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setPadding(0, dp(6), 0, dp(6));
-            row.addView(text((k + 1) + ".", 18, MUTED, true), new LinearLayout.LayoutParams(dp(32), ViewGroup.LayoutParams.WRAP_CONTENT));
-            row.addView(text(teamNames[i], 18, TEAM_COLORS[i], true), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-            row.addView(text(String.valueOf(scores[i]), 22, TEXT, true));
-            box.addView(row);
+            boolean first = k == 0;
+            LinearLayout item = row();
+            item.setPadding(dp(16), 0, dp(16), 0);
+            item.setBackgroundDrawable(round(SURFACE, 18));
+            TextView pos = text(String.valueOf(k + 1), 16, INK, W_BOLD);
+            pos.setGravity(Gravity.CENTER);
+            pos.setBackgroundDrawable(round(TEAM_COLORS[i], 16));
+            item.addView(pos, new LinearLayout.LayoutParams(dp(32), dp(32)));
+            LinearLayout.LayoutParams nlp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+            nlp.leftMargin = dp(14);
+            item.addView(text(teamNames[i], first ? 19 : 18, CREAM, first ? W_BOLD : W_SEMI), nlp);
+            item.addView(text(String.valueOf(scores[i]), first ? 24 : 22, first ? CREAM : MUTED, W_BOLD));
+            ranking.addView(item, matchHeight(dp(first ? 60 : 56), 0, 0, 0, dp(10)));
         }
-        col.addView(box, matchWrap(0, 0, 0, 0));
 
-        View spacer = new View(this);
-        col.addView(spacer, new LinearLayout.LayoutParams(1, 0, 1));
+        LinearLayout top = column();
+        top.addView(panel, matchWrap(0, 0, 0, 0));
+        top.addView(ranking);
+        ScrollView sv = new ScrollView(this);
+        sv.setFillViewport(true);
+        sv.addView(top);
 
-        TextView again = button("REVANCHA", ACCENT, 22);
+        LinearLayout bottom = column();
+        bottom.setPadding(dp(20), dp(8), dp(20), dp(16));
+        TextView again = bigButton("Revancha", YELLOW, 22);
         again.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
                 newGame();
             }
         });
-        col.addView(again, matchHeight(dp(64), 0, dp(24), 0, dp(12)));
-        TextView menu = button("Menú", SURFACE, 18);
+        bottom.addView(again, matchHeight(dp(68), 0, 0, 0, dp(10)));
+        TextView menu = bigButton("Cambiar equipos", SURFACE, 17);
+        menu.setTextColor(CREAM);
         menu.setOnClickListener(new View.OnClickListener() {
             public void onClick(View v) {
                 showSetup();
             }
         });
-        col.addView(menu, matchHeight(dp(52), 0, 0, 0, 0));
+        bottom.addView(menu, matchHeight(dp(56), 0, 0, 0, 0));
 
-        ScrollView sv = new ScrollView(this);
-        sv.setFillViewport(true);
-        sv.addView(col);
-        setContentView(sv);
+        LinearLayout root = column();
+        root.addView(sv, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        root.addView(bottom, matchWrap(0, 0, 0, 0));
+        setContentView(root);
     }
 
     // ------------------------------------------------------------------ feedback
@@ -945,15 +1114,27 @@ public class MainActivity extends Activity {
         return l;
     }
 
-    View wrapLeft(View v) {
+    LinearLayout row() {
         LinearLayout l = new LinearLayout(this);
-        l.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL);
-        l.addView(v, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        l.setGravity(Gravity.CENTER_VERTICAL);
         return l;
+    }
+
+    LinearLayout card() {
+        LinearLayout c = column();
+        c.setPadding(dp(16), dp(16), dp(16), dp(12));
+        c.setBackgroundDrawable(round(SURFACE, 22));
+        return c;
     }
 
     LinearLayout.LayoutParams matchWrap(int l, int t, int r, int b) {
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        p.setMargins(l, t, r, b);
+        return p;
+    }
+
+    LinearLayout.LayoutParams wrap(int l, int t, int r, int b) {
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         p.setMargins(l, t, r, b);
         return p;
     }
@@ -964,13 +1145,24 @@ public class MainActivity extends Activity {
         return p;
     }
 
-    TextView text(String s, float sp, int color, boolean bold) {
+    TextView text(String s, float sp, int color, int weight) {
         TextView t = new TextView(this);
         t.setText(s);
         t.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp);
         t.setTextColor(color);
-        if (bold) t.setTypeface(Typeface.DEFAULT_BOLD);
+        t.setTypeface(fonts[weight]);
+        t.setIncludeFontPadding(false);
         return t;
+    }
+
+    TextView label(String s) {
+        return text(s, 13, MUTED, W_BOLD);
+    }
+
+    View dot(int color, int sizeDp) {
+        View v = new View(this);
+        v.setBackgroundDrawable(round(color, sizeDp / 2f));
+        return v;
     }
 
     GradientDrawable round(int color, float radiusDp) {
@@ -982,7 +1174,7 @@ public class MainActivity extends Activity {
 
     static int darker(int c) {
         int a = c >>> 24, r = (c >> 16) & 0xFF, g = (c >> 8) & 0xFF, b = c & 0xFF;
-        return (a << 24) | ((r * 3 / 4) << 16) | ((g * 3 / 4) << 8) | (b * 3 / 4);
+        return (a << 24) | ((r * 7 / 10) << 16) | ((g * 7 / 10) << 8) | (b * 7 / 10);
     }
 
     Drawable pressable(int color, float radiusDp) {
@@ -992,54 +1184,134 @@ public class MainActivity extends Activity {
         return s;
     }
 
-    TextView button(String label, int color, float sp) {
-        TextView b = text(label, sp, TEXT, true);
+    /** Chunky button with a darker "ledge" underneath that sinks when pressed. */
+    TextView bigButton(String label, int color, float sp) {
+        int ledge = dp(5);
+        LayerDrawable up = new LayerDrawable(new Drawable[]{round(darker(color), 20), round(color, 20)});
+        up.setLayerInset(1, 0, 0, 0, ledge);
+        LayerDrawable down = new LayerDrawable(new Drawable[]{round(darker(color), 20), round(color, 20)});
+        down.setLayerInset(1, 0, ledge, 0, 0);
+        StateListDrawable s = new StateListDrawable();
+        s.addState(new int[]{android.R.attr.state_pressed}, down);
+        s.addState(new int[]{}, up);
+        TextView b = text(label, sp, INK, W_BOLD);
         b.setGravity(Gravity.CENTER);
         b.setClickable(true);
         b.setFocusable(true);
-        b.setBackgroundDrawable(pressable(color, 16));
-        b.setPadding(dp(8), dp(4), dp(8), dp(4));
+        b.setBackgroundDrawable(s);
+        b.setPadding(dp(8), 0, dp(8), ledge);
         return b;
     }
 
-    LinearLayout optionRow(String[] labels, int selected, final IntCallback cb) {
-        LinearLayout row = new LinearLayout(this);
+    TextView smallButton(String label, String description) {
+        TextView b = text(label, 20, CREAM, W_BOLD);
+        b.setGravity(Gravity.CENTER);
+        b.setClickable(true);
+        b.setFocusable(true);
+        b.setContentDescription(description);
+        b.setBackgroundDrawable(pressable(SURFACE2, 12));
+        return b;
+    }
+
+    TextView circleButton(String label, int color, String description) {
+        TextView b = text(label, 20, CREAM, W_BOLD);
+        b.setGravity(Gravity.CENTER);
+        b.setClickable(true);
+        b.setFocusable(true);
+        b.setContentDescription(description);
+        b.setBackgroundDrawable(pressable(color, 22));
+        return b;
+    }
+
+    /** Segmented control: an ink track with the selected option as a cream pill. */
+    LinearLayout segmented(String[] labels, int selected, final IntCallback cb) {
+        LinearLayout track = row();
+        track.setPadding(dp(4), dp(4), dp(4), dp(4));
+        track.setBackgroundDrawable(round(INK, 14));
         final TextView[] chips = new TextView[labels.length];
         for (int i = 0; i < labels.length; i++) {
             final int idx = i;
-            TextView c = text(labels[i], 17, TEXT, true);
+            TextView c = text(labels[i], 15, MUTED, W_SEMI);
             c.setGravity(Gravity.CENTER);
             c.setClickable(true);
             chips[i] = c;
             c.setOnClickListener(new View.OnClickListener() {
                 public void onClick(View v) {
-                    for (int j = 0; j < chips.length; j++) styleChip(chips[j], j == idx);
+                    for (int j = 0; j < chips.length; j++) styleSegment(chips[j], j == idx);
                     cb.call(idx);
                 }
             });
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(48), 1);
-            if (i < labels.length - 1) lp.rightMargin = dp(8);
-            row.addView(c, lp);
-            styleChip(c, i == selected);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(42), 1);
+            if (i < labels.length - 1) lp.rightMargin = dp(4);
+            track.addView(c, lp);
+            styleSegment(c, i == selected);
         }
-        return row;
+        return track;
     }
 
-    void styleChip(TextView c, boolean on) {
-        GradientDrawable g = round(on ? ACCENT : SURFACE, 14);
-        c.setBackgroundDrawable(g);
-        c.setTextColor(on ? TEXT : MUTED);
+    void styleSegment(TextView c, boolean on) {
+        c.setBackgroundDrawable(on ? round(CREAM, 11) : null);
+        c.setTextColor(on ? INK : MUTED);
+        c.setTypeface(fonts[on ? W_BOLD : W_SEMI]);
     }
 
-    /** Rounded progress bar for the remaining time. */
-    static class TimeBar extends View {
-        float frac = 1f;
-        int color = GREEN;
+    View switchRow(String title, boolean on, final IntCallback cb) {
+        LinearLayout r = row();
+        r.setClickable(true);
+        r.setMinimumHeight(dp(48));
+        r.addView(text(title, 16, CREAM, W_SEMI), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        final Toggle t = new Toggle(this, on);
+        t.setContentDescription(title);
+        r.addView(t, new LinearLayout.LayoutParams(dp(52), dp(30)));
+        r.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                t.setOn(!t.on);
+                cb.call(t.on ? 1 : 0);
+            }
+        });
+        return r;
+    }
+
+    /** On/off switch: sunflower when on, muted when off. */
+    static class Toggle extends View {
+        boolean on;
         final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         final RectF rect = new RectF();
 
-        TimeBar(Context c) {
+        Toggle(Context c, boolean on) {
             super(c);
+            this.on = on;
+        }
+
+        void setOn(boolean v) {
+            on = v;
+            invalidate();
+        }
+
+        @Override
+        protected void onDraw(Canvas c) {
+            float w = getWidth(), h = getHeight(), pad = h * 0.1f;
+            paint.setColor(on ? YELLOW : SURFACE2);
+            rect.set(0, 0, w, h);
+            c.drawRoundRect(rect, h / 2, h / 2, paint);
+            float d = h - 2 * pad;
+            float x = on ? w - pad - d / 2 : pad + d / 2;
+            paint.setColor(on ? INK : MUTED);
+            c.drawCircle(x, h / 2, d / 2, paint);
+        }
+    }
+
+    /** Rounded progress bar (turn time left, or a team's progress toward the goal). */
+    static class TimeBar extends View {
+        float frac = 1f;
+        int color = YELLOW;
+        final int track;
+        final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        final RectF rect = new RectF();
+
+        TimeBar(Context c, int track) {
+            super(c);
+            this.track = track;
         }
 
         void set(float f, int col) {
@@ -1051,7 +1323,7 @@ public class MainActivity extends Activity {
         @Override
         protected void onDraw(Canvas c) {
             float w = getWidth(), h = getHeight();
-            paint.setColor(0x33FFFFFF);
+            paint.setColor(track);
             rect.set(0, 0, w, h);
             c.drawRoundRect(rect, h / 2, h / 2, paint);
             if (frac > 0) {

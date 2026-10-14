@@ -2,24 +2,28 @@
 
 Juego de fiesta para Android: una persona hace que su equipo adivine una palabra **sin decir las 5 palabras prohibidas** que aparecen en la tarjeta. Se pasan el celular por turnos y cada turno tiene tiempo límite.
 
-**Descargar APK:** [`dist/tabu.apk`](dist/tabu.apk) (48 KB, Android 5.0 o superior)
+**Descargar APK:** [`dist/tabu.apk`](dist/tabu.apk) (200 KB, Android 5.0 o superior)
 
-| Menú | Jugando | Ganador |
-|---|---|---|
-| ![Menú](docs/menu.png) | ![Jugando](docs/jugando.png) | ![Ganador](docs/ganador.png) |
+| Menú | Pasa el celular | Jugando | Fin del turno | Ganador |
+|---|---|---|---|---|
+| ![Menú](docs/menu.png) | ![Turno](docs/turno.png) | ![Jugando](docs/jugando.png) | ![Resumen](docs/resumen.png) | ![Ganador](docs/ganador.png) |
 
 ## Cómo se juega
 
 1. Configura de 2 a 4 equipos (con sus nombres), el tiempo por turno (30–120 s) y los puntos para ganar (10–50).
-2. En cada turno, una persona describe la palabra grande; su equipo intenta adivinarla.
-3. Alguien de otro equipo vigila la pantalla:
+2. Antes de cada turno, la pantalla dice a qué equipo pasarle el celular. Al tocar **Estoy listo** hay una cuenta 3, 2, 1 y arranca el reloj.
+3. Una persona describe la palabra grande; su equipo intenta adivinarla.
+4. Alguien de otro equipo vigila la pantalla:
    - **¡CORRECTO!** → +1
    - **TABÚ** (dijo una palabra prohibida) → −1
    - **PASAR** → 0 (o −1 si activas la penalización)
-4. Al acabar el tiempo se muestra el resumen del turno; toca una palabra para corregir su resultado.
-5. Gana el primer equipo que alcance la meta al cerrar una ronda completa. Si hay empate, se juega otra ronda.
+   - **Deshacer** (debajo de los botones) devuelve la última palabra si alguien tocó mal.
+5. Al acabar el tiempo se muestra el resumen del turno; toca una palabra para corregir su resultado.
+6. Gana el primer equipo que alcance la meta al cerrar una ronda completa. Si hay empate, se juega otra ronda.
 
 Incluye 443 tarjetas en español (con palabras de Colombia como *tinto*, *arepa* o *Transmilenio*), cuenta regresiva con sonido, vibración, pausa (oculta la tarjeta) y la pantalla se mantiene encendida durante el turno. Las tarjetas no se repiten hasta haber usado todo el mazo, aunque cierres la app.
+
+Diseño: fondo tinta, tarjeta crema y acentos coral, amarillo y menta, con la tipografía [Bricolage Grotesque](https://fonts.google.com/specimen/Bricolage+Grotesque) (licencia OFL, en `app/src/main/assets/fonts/`). El ícono es un globo de diálogo con una palabra tachada, e incluye versión monocromática para los íconos temáticos de Android 13+.
 
 ## Instalar
 
@@ -40,4 +44,5 @@ El APK se firma con `keystore/tabu.p12` (contraseña `tabu-android`). Es una lla
 
 - `app/src/main/java/com/juanddiazm/tabu/MainActivity.java`: toda la app (pantallas creadas por código, temporizador y puntajes).
 - `app/src/main/java/com/juanddiazm/tabu/Words.java`: las tarjetas, en formato `PALABRA|prohibida1|…|prohibida5`.
-- `app/src/main/res/`: tema e ícono.
+- `app/src/main/res/`: tema, ícono y gráficos vectoriales.
+- `app/src/main/assets/fonts/`: tipografía.

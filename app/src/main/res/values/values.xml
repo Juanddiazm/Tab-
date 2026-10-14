@@ -2,9 +2,9 @@
 <resources>
     <string name="app_name">Tabú</string>
 
-    <color name="bg">#FF1E1B3A</color>
-    <color name="accent">#FFFF4D6D</color>
-    <color name="icon_bg">#FF4A2C83</color>
+    <color name="bg">#FF17122E</color>
+    <color name="accent">#FFFFC93C</color>
+    <color name="icon_bg">#FFFF5A4E</color>
 
     <style name="AppTheme" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/bg</item>

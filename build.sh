@@ -4,8 +4,8 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-VERSION_CODE=1
-VERSION_NAME=1.0
+VERSION_CODE=2
+VERSION_NAME=1.1
 MIN_SDK=21
 TARGET_SDK=34
 
@@ -31,7 +31,7 @@ rm -rf "$B" && mkdir -p "$B/gen" "$B/classes" "$B/dex" dist
 echo "== Recursos"
 "$T/aapt2" compile --dir app/src/main/res -o "$B/res.zip"
 "$T/aapt2" link -o "$B/base.apk" -I "$T/android-framework.jar" \
-  --manifest app/src/main/AndroidManifest.xml --java "$B/gen" \
+  --manifest app/src/main/AndroidManifest.xml --java "$B/gen" -A app/src/main/assets \
   --min-sdk-version $MIN_SDK --target-sdk-version $TARGET_SDK \
   --version-code $VERSION_CODE --version-name $VERSION_NAME \
   "$B/res.zip"
